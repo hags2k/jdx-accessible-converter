@@ -1,0 +1,35 @@
+# Node dependencies
+node_modules/
+
+# Bundled and packaged build output
+parse-jdx.bundle.cjs
+JDX-Accessible-Converter.exe
+*.exe
+
+# Converter output
+accessible-output/
+*.accessible.html
+
+# Distribution packages
+*.zip
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Environment and credential files
+.env
+.env.*
+!.env.example
+
+# Editor and operating-system files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local test material that may contain university data
+private-samples/
+real-samples/
+test-input-private/
