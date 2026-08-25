@@ -243,6 +243,7 @@ function parseJdx(html) {
     positionInfo: [],
     summary: "",
     responsibilities: [],
+    additionalResponsibilities: [],
     qualifications: [],
     preferredQualifications: [],
     knowledgeSkillsAbilities: [],
@@ -270,6 +271,22 @@ function parseJdx(html) {
     }
   }
 
+  // UIS may place the working title in the upper-right cell
+  // of the first document-header table rather than in a labeled field.
+  if (!model.workingTitle) {
+    const firstTable = root.find("table").first();
+    const firstRow = firstTable.find("tr").first();
+    const lastCell = firstRow.children("td, th").last();
+
+    const uisHeaderTitle = clean(
+      lastCell.find("p").first().text()
+    );
+
+    if (uisHeaderTitle) {
+      model.workingTitle = uisHeaderTitle;
+    }
+  }
+
   // UIUC uses Title as the primary display title. UIC samples may not contain it.
   if (!model.workingTitle) {
     model.workingTitle = model.classificationTitle.replace(/^\s*\d+\s*-\s*/, "") ||
@@ -277,11 +294,12 @@ function parseJdx(html) {
       "Job Description";
   }
 
-  const summaryIndex = findHeadingIndex(compactRows, [
-    "BRIEF JOB SUMMARY", "POSITION SUMMARY", "JOB SUMMARY",
+  model.summary = extractSummaryParagraphs($, root, [
+    "BRIEF JOB SUMMARY",
+    "POSITION SUMMARY",
+    "JOB SUMMARY",
     "PRIMARY POSITION FUNCTION/SUMMARY"
   ]);
-  model.summary = firstContentAfter(compactRows, summaryIndex);
 
   model.responsibilities =
     extractResponsibilitiesFromSection(rows);
@@ -299,6 +317,22 @@ function parseJdx(html) {
     model.responsibilities =
       extractResponsibilitiesFromAllRows(rows);
   }
+
+  // UIS uses a standalone Additional Responsibilities section.
+  model.additionalResponsibilities = extractSectionRows(
+    compactRows,
+    ["ADDITIONAL RESPONSIBILITIES"],
+    [
+      "QUALIFICATIONS",
+      "MINIMUM QUALIFICATIONS",
+      "PREFERRED QUALIFICATIONS",
+      "KNOWLEDGE, SKILLS AND ABILITIES",
+      "PHYSICAL DEMANDS",
+      "WORKING ENVIRONMENT",
+      "TRAVEL REQUIREMENTS",
+      "MANAGER APPROVAL"
+    ]
+  );
 
   // UIUC qualifications use label/value rows.
   extractLabeledValue(rows, "Minimum Qualifications", model.qualifications);
@@ -393,10 +427,64 @@ function firstContentAfter(rows, index) {
   return "";
 }
 
+function extractSummaryParagraphs($, root, headings) {
+  const wantedHeadings = new Set(
+    headings.map(normalizeHeading)
+  );
+
+  const rows = root.find("tr").toArray();
+
+  for (let i = 0; i < rows.length; i++) {
+    const cells = rowCells($, rows[i]);
+    const firstContent = cells.find(Boolean) || "";
+
+    if (!wantedHeadings.has(normalizeHeading(firstContent))) {
+      continue;
+    }
+
+    /*
+     * Search the rows following the summary heading. This allows
+     * for empty formatting rows between the heading and content.
+     */
+    for (let j = i + 1; j < rows.length; j++) {
+      const nextCells = rowCells($, rows[j]);
+      const nextContent = nextCells.find(Boolean) || "";
+
+      if (!nextContent) {
+        continue;
+      }
+
+      /*
+       * Stop rather than accidentally treating the next section
+       * as summary text.
+       */
+      if (looksLikeHeading(nextContent)) {
+        return [];
+      }
+
+      const paragraphs = $(rows[j])
+        .find("p")
+        .map((_, paragraph) => clean($(paragraph).text()))
+        .get()
+        .filter(Boolean);
+
+      /*
+       * Some JDX files may not use paragraph elements inside the
+       * summary row. Preserve the flattened row text as a fallback.
+       */
+      return paragraphs.length
+        ? paragraphs
+        : [nextContent];
+    }
+  }
+
+  return [];
+}
+
 function looksLikeHeading(value) {
   const heading = normalizeHeading(value);
   return [
-    "DUTIES AND RESPONSIBILITIES", "QUALIFICATIONS", "MINIMUM QUALIFICATIONS",
+    "DUTIES AND RESPONSIBILITIES", "ADDITIONAL RESPONSIBILITIES", "QUALIFICATIONS", "MINIMUM QUALIFICATIONS",
     "PREFERRED QUALIFICATIONS", "KNOWLEDGE, SKILLS AND ABILITIES",
     "PHYSICAL DEMANDS", "PHYSICAL DEMANDS/WORKING CONDITIONS",
     "WORKING ENVIRONMENT", "OSHA CATEGORIES", "EQUIPMENT AND TOOLS",
@@ -550,6 +638,18 @@ function renderList(items) {
   return `<ul>\n${items.map(item => `        <li>${escapeHtml(item)}</li>`).join("\n")}\n      </ul>`;
 }
 
+function renderParagraphs(content) {
+  const items = Array.isArray(content)
+    ? content
+    : content
+      ? [content]
+      : [];
+
+  return items
+    .map(item => `      <p>${escapeHtml(item)}</p>`)
+    .join("\n");
+}
+
 function renderFrequencyTable(caption, rows) {
   if (!rows.length) return "";
   return `<table>
@@ -635,8 +735,9 @@ function renderAccessibleHtml(job) {
     <h1>${escapeHtml(job.workingTitle)}</h1>
     ${classification}
 ${section("Position Information", info)}
-${section("Position Summary", job.summary ? `<p>${escapeHtml(job.summary)}</p>` : "")}
+${section("Position Summary", renderParagraphs(job.summary))}
 ${section("Duties and Responsibilities", duties)}
+${section("Additional Responsibilities", renderParagraphs(job.additionalResponsibilities))}
 ${section("Minimum Qualifications", renderList(job.qualifications))}
 ${section("Preferred Qualifications", renderList(job.preferredQualifications))}
 ${section("Knowledge, Skills and Abilities", renderList(job.knowledgeSkillsAbilities))}
@@ -683,7 +784,7 @@ ${section("Manager Approval", approval)}
 function audit(model) {
   const warnings = [];
   if (!model.workingTitle) warnings.push("No working title or fallback title was found.");
-  if (!model.summary) warnings.push("No job summary was found.");
+  if (!model.summary.length) warnings.push("No job summary was found.");
   if (!model.responsibilities.length) warnings.push("No responsibilities were found.");
   if (!model.qualifications.length) { warnings.push("No minimum qualifications were found."); }
   if (!model.knowledgeSkillsAbilities.length) warnings.push("No Knowledge, Skills and Abilities entries were found.");

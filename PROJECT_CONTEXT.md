@@ -82,6 +82,7 @@ If no responsibilities are found in the scoped section, the converter preserves 
 - Position information
 - Position summary
 - Duties and responsibilities
+- Additional Responsibilities (UIS)
 - Minimum qualifications
 - Specialty factors
 - Preferred qualifications

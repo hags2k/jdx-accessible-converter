@@ -122,6 +122,13 @@ This command bundles the converter and builds the Windows executable using the s
 
 Test the completed executable from a separate folder that does not contain the project source files or `package.json`.
 
+## Version 0.4.0
+
+- Updates to handle UIS specific JDX elements
+  - Title only at top of JD - no existing title field for some AP jobs
+  - "Additional Responsibilities" section
+- Updating Job Summary to handle multiple paragraphs
+
 ## Version 0.3.5
 
 - Fixed issue where output could overwrite input
