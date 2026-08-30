@@ -1,6 +1,6 @@
 # JDXpert Accessible HTML Converter
 
-Current version: 0.3.0
+Current version: 0.4.0
 
 The JDXpert Accessible HTML Converter transforms saved JDXpert job-description HTML into a simplified, more accessible HTML document.
 
