@@ -1,6 +1,6 @@
 # JDXpert Accessible HTML Converter
 
-Current version: 0.4.0
+Current version: 0.5.0
 
 The JDXpert Accessible HTML Converter transforms saved JDXpert job-description HTML into a simplified, more accessible HTML document.
 
@@ -121,6 +121,10 @@ npm run build:exe
 This command bundles the converter and builds the Windows executable using the settings in `sea-config.json`.
 
 Test the completed executable from a separate folder that does not contain the project source files or `package.json`.
+
+## Version 0.5.0
+
+- Updated rendering of duties - subsections into individual list items
 
 ## Version 0.4.0
 

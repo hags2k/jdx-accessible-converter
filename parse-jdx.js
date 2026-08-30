@@ -301,8 +301,10 @@ function parseJdx(html) {
     "PRIMARY POSITION FUNCTION/SUMMARY"
   ]);
 
+  const rawRows = root.find("tr").toArray();
+
   model.responsibilities =
-    extractResponsibilitiesFromSection(rows);
+    extractResponsibilitiesFromSection($, rawRows);
 
   // Preserve the previous document-wide behavior as a fallback
   // when a recognizable duties section is not found or contains
@@ -315,7 +317,7 @@ function parseJdx(html) {
     }
 
     model.responsibilities =
-      extractResponsibilitiesFromAllRows(rows);
+      extractResponsibilitiesFromAllRows($, rawRows);
   }
 
   // UIS uses a standalone Additional Responsibilities section.
@@ -492,7 +494,7 @@ function looksLikeHeading(value) {
   ].some(item => heading.includes(item));
 }
 
-function extractResponsibilitiesFromSection(rows) {
+function extractResponsibilitiesFromSection($, rows) {
   const startHeadings = new Set([
     "DUTIES AND RESPONSIBILITIES",
     "DUTIES & RESPONSIBILITIES",
@@ -504,12 +506,13 @@ function extractResponsibilitiesFromSection(rows) {
   let active = false;
   const responsibilities = [];
 
-  for (const cells of rows) {
+  for (const row of rows) {
     /*
      * Most JDX heading rows use the first cell, but finding the
      * first nonempty cell makes this a little more tolerant of
      * empty formatting cells before the heading.
      */
+    const cells = rowCells($, row);
     const firstContent = cells.find(Boolean) || "";
     const heading = normalizeHeading(firstContent);
 
@@ -517,7 +520,6 @@ function extractResponsibilitiesFromSection(rows) {
       active = true;
       continue;
     }
-
     /*
      * Once the duties section has started, stop when another
      * recognized major heading is encountered.
@@ -530,7 +532,7 @@ function extractResponsibilitiesFromSection(rows) {
       continue;
     }
 
-    const responsibility = parseResponsibilityRow(cells);
+    const responsibility = parseResponsibilityRow($, row);
 
     if (responsibility) {
       responsibilities.push(responsibility);
@@ -540,11 +542,11 @@ function extractResponsibilitiesFromSection(rows) {
   return responsibilities;
 }
 
-function extractResponsibilitiesFromAllRows(rows) {
+function extractResponsibilitiesFromAllRows($, rows) {
   const responsibilities = [];
 
-  for (const cells of rows) {
-    const responsibility = parseResponsibilityRow(cells);
+  for (const row of rows) {
+    const responsibility = parseResponsibilityRow($, row);
 
     if (responsibility) {
       responsibilities.push(responsibility);
@@ -554,20 +556,161 @@ function extractResponsibilitiesFromAllRows(rows) {
   return responsibilities;
 }
 
-function parseResponsibilityRow(cells) {
-  const marker = cells[0] || "";
-  const text = cells[1] || "";
+function parseResponsibilityRow($, row) {
+  const cells = $(row).children("th, td");
 
-  if ((marker !== "•" && marker !== "-") || !text) {
+  if (cells.length < 2) {
     return null;
   }
 
+  const marker = clean(cells.eq(0).text());
+
+  if (marker !== "•" && marker !== "-") {
+    return null;
+  }
+
+  const contentCell = cells.eq(1);
+  const percentCell = cells.eq(2);
+
+  const items = extractResponsibilityItems($, contentCell);
+
+  if (!items.length) {
+    return null;
+  }
+
+  const percentText = clean(percentCell.text());
+
   return {
-    text,
-    percent: /^\d+(?:\.\d+)?%$/.test(cells[2] || "")
-      ? cells[2]
+    items,
+    percent: /^\d+(?:\.\d+)?%$/.test(percentText)
+      ? percentText
       : ""
   };
+}
+
+function extractResponsibilityItems($, contentCell) {
+  const items = [];
+
+  /*
+   * Prefer actual list items when the source contains semantic
+   * or editor-generated list markup.
+   */
+  const listItems = contentCell.find("li");
+
+  if (listItems.length) {
+    listItems.each((_, item) => {
+      const text = normalizeResponsibilityItem(
+        clean($(item).text())
+      );
+
+      if (text) {
+        items.push(text);
+      }
+    });
+
+    return items;
+  }
+
+  /*
+   * JDX exports frequently represent separate lines as paragraphs.
+   * Read each paragraph separately so those boundaries are not lost.
+   */
+  const paragraphs = contentCell.find("p");
+
+  if (paragraphs.length) {
+    paragraphs.each((_, paragraph) => {
+      const paragraphText = clean($(paragraph).text());
+
+      if (!paragraphText) {
+        return;
+      }
+
+      items.push(
+        ...splitResponsibilityText(paragraphText)
+      );
+    });
+
+    return items;
+  }
+
+  /*
+   * Final fallback for cells that contain plain text or <br>
+   * elements rather than paragraphs or list items.
+   */
+  const fallbackHtml = contentCell
+    .html()
+    ?.replace(/<br\s*\/?>/gi, "\n") || "";
+
+  const fallbackText = cleanPreservingLines(
+    cheerio.load(`<div>${fallbackHtml}</div>`).text()
+  );
+
+  for (const line of fallbackText.split(/\n+/)) {
+    items.push(...splitResponsibilityText(line));
+  }
+
+  return items.filter(Boolean);
+}
+
+function splitResponsibilityText(value) {
+  if (!value) {
+    return [];
+  }
+
+  /*
+   * First split on common bullet glyphs.
+   */
+  const bulletParts = value.split(
+    /\s*[•●▪◦]\s*/u
+  );
+
+  const results = [];
+
+  for (const part of bulletParts) {
+    if (!part.trim()) {
+      continue;
+    }
+
+    /*
+     * Then split when a numbered item begins after whitespace.
+     * Examples:
+     *   1. First item
+     *   2) Second item
+     *
+     * The lookahead retains the number for normalization below.
+     */
+    const numberedParts = part.split(
+      /\s+(?=\d+[.)]\s+)/u
+    );
+
+    for (const numberedPart of numberedParts) {
+      const item = normalizeResponsibilityItem(
+        numberedPart
+      );
+
+      if (item) {
+        results.push(item);
+      }
+    }
+  }
+
+  return results;
+}
+
+function normalizeResponsibilityItem(value) {
+  return clean(value)
+    .replace(/^[•●▪◦-]\s*/u, "")
+    .replace(/^\d+[.)]\s*/, "")
+    .trim();
+}
+
+function cleanPreservingLines(value = "") {
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
 }
 
 function extractLabeledValue(rows, wantedLabel, target) {
@@ -650,6 +793,38 @@ function renderParagraphs(content) {
     .join("\n");
 }
 
+function renderResponsibilities(responsibilities) {
+  if (!responsibilities.length) {
+    return "";
+  }
+
+  const renderedItems = [];
+
+  for (const responsibility of responsibilities) {
+    const items = responsibility.items || [];
+
+    items.forEach((item, index) => {
+      const isLastItem =
+        index === items.length - 1;
+
+      const percent = isLastItem &&
+        responsibility.percent
+        ? ` <span class="duty-percent">` +
+          `(${escapeHtml(responsibility.percent)} of time)` +
+          `</span>`
+        : "";
+
+      renderedItems.push(
+        `        <li>${escapeHtml(item)}${percent}</li>`
+      );
+    });
+  }
+
+  return `<ul>
+${renderedItems.join("\n")}
+      </ul>`;
+}
+
 function renderFrequencyTable(caption, rows) {
   if (!rows.length) return "";
   return `<table>
@@ -701,7 +876,7 @@ function section(title, body) {
 
 function renderAccessibleHtml(job) {
   const info = job.positionInfo.length ? `<dl>\n${job.positionInfo.map(([key, value]) => `        <dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("\n")}\n      </dl>` : "";
-  const duties = job.responsibilities.length ? `<ul>\n${job.responsibilities.map(item => `        <li>${escapeHtml(item.text)}${item.percent ? ` <span class="duty-percent">(${escapeHtml(item.percent)} of time)</span>` : ""}</li>`).join("\n")}\n      </ul>` : "";
+  const duties = renderResponsibilities(job.responsibilities);
   const approval = job.managerApproval.length ? `<dl>\n${job.managerApproval.map(([key, value]) => `        <dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("\n")}\n      </dl>` : "";
   const classification = job.classificationTitle && job.classificationTitle !== job.workingTitle
     ? `<p class="classification"><strong>Classification:</strong> ${escapeHtml(job.classificationTitle)}</p>` : "";
